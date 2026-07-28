@@ -4,10 +4,8 @@ from torch.nn.utils.rnn import pad_sequence
 import torch.nn.functional as F
 import time
 
-from model_reverseEnglish.transformer_model import Transformer
-from model_reverseEnglish.data_utils import create_synthetic_data, Vocabulary, TranslationDataset
-from model_reverseEnglish.train import TransformerTrainer
-from model_reverseEnglish.inference import TransformerInference
+from .model import Transformer
+from .train import TransformerTrainer
 from datasets import load_dataset
 
 from itertools import chain
@@ -16,67 +14,6 @@ from tokenizers.models import BPE
 from tokenizers.pre_tokenizers import Whitespace
 from tokenizers.trainers import BpeTrainer
 
-
-def beam_search(self, model, src_vocab, tgt_vocab, src_sentence, beam_width=3, max_len=50):
-        """
-        Beam Search Decoding - maintains multiple hypothesis
-        
-        Args:
-            src_sentence:   <type>  
-            beam_width:     <int>     
-            max_len:        <int>   
-        Return:
-            self.tgt_vocab.decode(best_beam['tokens'])      <type>
-        """
-        # Encode source w/ consistent max_len
-        src_tokens = torch.tensor([self.src_vocab.encode(src_sentence, max_len=15)], dtype=torch.int64)
-        src_mask = self.model.create_padding_mask(src_tokens)
-
-        # Initialize Beam w/ SOS token
-        beams = [{'tokens': [self.tgt_vocab.token2Idx['[BOS]']], 'score': 0.0}]
-
-
-        for step in range(max_len):
-            candidates = []
-
-            for beam in beams:
-                if beam['tokens'][-1] == self.tgt_vocab.token2Idx['[EOS]']:
-                    candidates.append(beam)
-                    continue
-
-                # Get Cur Seq
-                tgt_tokens = torch.tensor([beam['tokens']], dtype=torch.int64)
-
-                tgt_causal_mask = self.model.create_causal_mask(tgt_tokens.size(1))
-                tgt_padding_mask = self.model.create_padding_mask(tgt_tokens)
-                tgt_mask = tgt_causal_mask & tgt_padding_mask
-
-                # Forward Pass
-                with torch.no_grad():
-                    output = self.model(src_tokens, tgt_tokens, src_mask, tgt_mask)
-
-                # Get Probabilities for next token
-                logits = output[:, -1, :]
-                probs = F.log_softmax(logits, dim=-1)
-
-                # Get top-k candidates
-                top_probs, top_indices = torch.topk(probs, beam_width)
-
-                for prob, idx in zip(top_probs[0], top_indices[0]):
-                    new_tokens = beam['tokens'] + [idx.item()]
-                    new_score = beam['score'] + prob.item()
-                    candidates.append({'tokens': new_tokens, 'score': new_score})
-
-            # Select top beam_width candidates
-            candidates.sort(key=lambda x: x['score'], reverse=True)
-            beams = candidates[:beam_width]
-
-            # Check if all beams ended
-            if all(beam['tokens'][-1] == self.tgt_vocab.token2Idx['<EOS>'] for beam in beams):
-                break
-
-        best_beam = max(beams, key=lambda x: x['score'])
-        return self.tgt_vocab.decode(best_beam['tokens'])
 
 
 # tokenizer
@@ -101,8 +38,6 @@ def tokenize(dataset):
     )
 
     return tokenizer
-
-
 
 
 
@@ -134,8 +69,8 @@ def main():
             "src": src_batch,
             "tgt": tgt_batch[:, :-1],
             "tgt_output": tgt_batch[:, 1:],
-            "source_padding_mask": src_batch.eq(PAD_ID),
-            "target_padding_mask": tgt_batch[:, :-1].eq(PAD_ID),
+            "src_padding_mask": src_batch.eq(PAD_ID),
+            "tgt_padding_mask": tgt_batch[:, :-1].eq(PAD_ID),
         }
 
 
@@ -159,58 +94,45 @@ def main():
     BOS_ID = tokenizer.token_to_id("[BOS]")
     EOS_ID = tokenizer.token_to_id("[EOS]")
 
-    # self.token2Idx = {'<PAD>': 0, '<SOS>': 1, '<EOS>': 2, '<UNK>': 3}
-
     VOCAB_SIZE = tokenizer.get_vocab_size()  
 
-    # # Prepare Data
-    # src_sentences, tgt_sentences = create_synthetic_data(num_samples=200)  # list<string>
-    # src_vocab = Vocabulary()        # dict{idx: token}, dict{token: idx}, size
-    # tgt_vocab = Vocabulary()        # dict{idx: token}, dict{token: idx}, size
-    # src_vocab.build_vocab(src_sentences)
-    # tgt_vocab.build_vocab(tgt_sentences)
+    train_loader = DataLoader(
+        training_dataset, 
+        batch_size=16, 
+        shuffle=True, 
+        collate_fn=collate_fn
+    )
 
-    # dataset = TranslationDataset(src_sentences, tgt_sentences, src_vocab, tgt_vocab, max_len=15)
-    train_loader = DataLoader(training_dataset, batch_size=8, shuffle=True, collate_fn=collate_fn)
+    validation_loader = DataLoader(
+        validation_dataset,
+        batch_size=16,
+        shuffle=True,
+        collate_fn=collate_fn
+    )
     
     # Create Model
     model = Transformer(
         src_vocab_size=VOCAB_SIZE,
         tgt_vocab_size=VOCAB_SIZE,
-        d_model=64,
-        num_heads=4,
-        num_encoder_layers=2,
-        num_decoder_layers=2,
-        d_ff=256,
+        d_model=256,
+        num_heads=8,
+        num_encoder_layers=3,
+        num_decoder_layers=3,
+        d_ff=512,
         dropout=0.1
     )
 
     # Train Model
-    trainer = TransformerTrainer(model, train_loader, lr=1e-3, warmup_steps=25)
-    epochs = 5
+    trainer = TransformerTrainer(model, train_loader, validation_loader, PAD_ID, lr=1e-3, warmup_steps=15)
+
+    start = time.perf_counter()
+    # num_test_batches = 100
+
+    epochs = 1
     print(f"\n-----Training for {epochs} epochs-----")
     for epoch in range(1, epochs+1):
-        avg_loss = trainer.train_epoch()
-        print(f"Epoch {epoch}, Loss: {avg_loss:.4f}\n")
-
-    # # Test Model Inference
-    # inference = TransformerInference(model, src_vocab, tgt_vocab)
-    # test_sentences = ["hello world", "good morning", "thank you very much"]
-    # beam_widths = [1, 3, 5]
-    
-    # print("\nInference Results:")
-    # for w in beam_widths:
-    #     print(f"\nBeam Width: {w}")
-    #     for sentence in test_sentences:
-    #         print(f"    Source: '{sentence}'")
-    #         print(f"    Expected: '{' '.join(sentence.split()[::-1])}'")
-
-    #         start_time = time.time()
-    #         beam_result = inference.beam_search(sentence, beam_width=w)
-    #         beam_time = time.time() - start_time
-                    
-    #         print(f"    Beam: '{beam_result}' (time: {beam_time:.3f}s)")
-    #         print("    " + "-" * 50)
+        training_loss, validation_loss = trainer.train_epoch(epoch)
+        print(f"Epoch {epoch}, Training Loss: {training_loss:.4f}, Validation Loss: {validation_loss}\n")
 
 
 if __name__ == "__main__":

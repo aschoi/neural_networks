@@ -38,13 +38,13 @@ class TransformerDecoderLayer(nn.Module):
     def forward(self, X, encoder_output, self_attention_mask=None, cross_attention_mask=None):
         """
         Args:
-            X:                      <type>
-            encoder_output:         <type>
-            self_attention_mask:    <type>
-            cross_attention_mask:   <type>
+            X:                      <tensor>    shape: (batch_size, seq_len_q,   d_model)
+            encoder_output:         <tensor>    shape: (batch_size, seq_len_q,   d_model)
+            self_attention_mask:    <tensor>    shape: (batch_size,         1, seq_len_q, seq_len_q)
+            cross_attention_mask:   <tensor>    shape: (batch_size,         1,         1, seq_len_q)
         Return:
-            final_output:           <type>
-            (self_attn_weights, cross_attn_weights)     tuple(<type>, <type>)
+            final_output:           <tensor>    shape: (batch_size, seq_len_q, d_model)
+            (self_attn_weights, cross_attn_weights)     tuple(<tensor>, <tensor>)
         """
         # 1) Masked Multi-head Self-Attention + Add & Norm
         self_attn_output, self_attn_weights = self.self_attention_sublayer(X, X, X, self_attention_mask)
@@ -71,8 +71,8 @@ class TransformerDecoder(nn.Module):
         Args:
             num_layers      <int>     Number of Transformer Encoder Layers
             d_model:        <int>     Model dimension
-            num_heads       <type>    Number of Heads
-            d_ff:           <type>    
+            num_heads       <int>    Number of Heads
+            d_ff:           <int>    
             dropout:        <float>   Dropout rate
             activation:     <string>  Activation Function ('relu' or 'gelu')
         """
@@ -88,13 +88,13 @@ class TransformerDecoder(nn.Module):
     def forward(self, X, encoder_output, self_attention_mask=None, cross_attention_mask=None):
         """
         Args:
-            X:                      <type>
-            encoder_output:         <type>
-            self_attention_mask:    <type>
-            cross_attention_mask:   <type>
+            X:                      <tensor>    shape: (batch_size, seq_len_q,   d_model)
+            encoder_output:         <tensor>    shape: (batch_size, seq_len_q,   d_model)
+            self_attention_mask:    <tensor>    shape: (batch_size,         1, seq_len_q, seq_len_q)
+            cross_attention_mask:   <tensor>    shape: (batch_size,         1,         1, seq_len_q)
         Return:
-            X:           <type>
-            (all_self_attn_weights, all_cross_attn_weights)    tuple(list<type>, list<type>)
+            X:           <tensor>   shape: (batch_size, seq_len_q,   d_model)
+            (all_self_attn_weights, all_cross_attn_weights)    tuple(list<tensor>, list<tensor>)    both of shape: (batch_size, num_heads?, seq_len_q, seq_len_q)
         """
         all_self_attn_weights = []
         all_cross_attn_weights = []

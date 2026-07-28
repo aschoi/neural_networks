@@ -39,8 +39,8 @@ class MultiHeadAttention(nn.Module):
             value:      <tensor>
             mask:       <tensor>
         Return:
-            output:         <type>
-            att_weights:    <type>
+            output:         <tensor>    shape: (batch_size, seq_len_q, dim_model)
+            att_weights:    <tensor>    shape: (batch_size, num_heads?, seq_len_q, seq_len_q)
         """
         batch_size = query.size(0)
         seq_len_q = query.size(1)
@@ -88,10 +88,10 @@ class MultiHeadAttention(nn.Module):
             q:      <tensor>
             k:      <tensor>
             v:      <tensor>
-            mask:   <type>
+            mask:   <tensor>
         Return:
-            output:             <type>
-            attention_weights:  <type>
+            output:             <tensor>    shape: (batch_size, num_heads?, seq_len_q, seq_len_q + 1)
+            attention_weights:  <tensor>    shape: (batch_size, num_heads?, seq_len_q, seq_len_q)
         '''
         scores = torch.matmul(q, k.transpose(-2, -1) / math.sqrt(self.d_k))
 

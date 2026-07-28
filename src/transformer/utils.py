@@ -20,10 +20,10 @@ class AddNorm(nn.Module):
     def forward(self, X, sublayer_output):
         """
         Args:
-            X:                  <type>  Original input (residual connection)
-            sublayer_output:    <type>  Output from sublayer (attention or FFN)
+            X:                  <tensor>  Original input (residual connection)
+            sublayer_output:    <tensor>  Output from sublayer (attention or FFN)
         Returns:
-            <type>  Normalized output after Residual Connection 
+            <tensor>  Normalized output after Residual Connection 
         """
         # Add:  Residual Connection + Apply Dropout
         output = X + self.dropout(sublayer_output)

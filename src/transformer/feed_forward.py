@@ -31,9 +31,9 @@ class PositionwiseFeedForward(nn.Module):
     def forward(self, X):
         """
         Args:
-            X:      <type>
+            X:      <tensor>
         Return:
-            X:      <type>
+            X:      <tensor>
         """
         X = self.linear1(X)
         X = self.activation(X)

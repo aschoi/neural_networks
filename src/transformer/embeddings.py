@@ -49,9 +49,9 @@ class PositionalEncoding(nn.Module):
         """
         Add positional encoding to input embeddings
         Args:
-            X:      <type>
+            X:      <tensor>
         Return:
-            output:     <type>
+            output:     <tensor>
         """
         seq_len = X.size(1)
         X = X + self.pe[:, :seq_len]

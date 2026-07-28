@@ -11,7 +11,7 @@ class TransformerEncoderLayer(nn.Module):
 
         Args:
             d_model:        <int>     Model dimension
-            num_heads:      <type>    Number of Heads
+            num_heads:      <int>     Number of Heads
             dropout:        <float>   Dropout rate
             activation:     <string>  Activation Function ('relu' or 'gelu')
         """
@@ -25,12 +25,12 @@ class TransformerEncoderLayer(nn.Module):
     def forward(self, X, mask=None):
         """
         Args:
-            X:      <type> 
-            mask    <type>
+            X:      <tensor> 
+            mask:   <tensor>
         
         Return:
-            X                   <type>
-            attention_weights   <type>
+            X                   <tensor>    shape: (batch_size, seq_len_q, d_model)
+            attention_weights   <tensor>    shape: (batch_size, num_heads, seq_len_q, seq_len_q)
         """
         # Multi-Head Self-Attention + Add & Norm
         attn_output, attention_weights = self.selfAttn_mha_sublayer(X, X, X, mask)
@@ -51,8 +51,8 @@ class TransformerEncoder(nn.Module):
         Args:
             num_layers      <int>     Number of Transformer Encoder Layers
             d_model:        <int>     Model dimension
-            num_head:       <type>    Number of Heads
-            d_ff            <type>    
+            num_heads:      <int>     Number of Heads
+            d_ff            <int>    
             dropout:        <float>   Dropout rate
             activation:     <string>  Activation Function ('relu' or 'gelu')
         """
@@ -70,11 +70,11 @@ class TransformerEncoder(nn.Module):
         Forward pass through Encoder <stack>
 
         Args:
-            X:      <type>
-            mask    <type>
+            X:      <tensor>
+            mask    <tensor>
         Return:
-            X:                          <type>
-            attention_weights_stack     <list <type>>
+            X:                          <tensor>            shape: (batch_size, seq_len_q, d_model)
+            attention_weights_stack     <list <tensor>>     element shape: (batch_size, num_heads?, seq_len_q, seq_len_q)
         """
         attention_weights_stack = []
 

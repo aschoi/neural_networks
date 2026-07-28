@@ -64,21 +64,21 @@ class TransformerTrainer:
             self.update_lr()
 
             # Parse Batch Data
-            src = batch['src']
-            tgt_input = batch['tgt']
-            tgt_output = batch['tgt_output']
+            src = batch['src']      # shape: (batch_size, seq_len_q)
+            tgt_input = batch['tgt']  # shape: (batch_size, seq_len_q)
+            tgt_output = batch['tgt_output']  # shape: (batch_size, seq_len_q)
 
             # Create masks (part of training / data prep technique. basically a techinique that helps to optimize result from training)
-            src_mask = self.model.create_padding_mask(src)
-            tgt_causal_mask = self.model.create_causal_mask(tgt_input.size(1))
-            tgt_padding_mask = self.model.create_padding_mask(tgt_input)
+            src_mask = self.model.create_padding_mask(src)      # shape: (batch_size, 1, 1, seq_len_q)
+            tgt_causal_mask = self.model.create_causal_mask(tgt_input.size(1))       # shape: (batch_size, 1, seq_len_q, seq_len_q)
+            tgt_padding_mask = self.model.create_padding_mask(tgt_input)            # shape: (batch_size, 1, 1, seq_len_q)
             # Combine masks: both must be True for attention to be allowed
             # Broadcasting can handle shape diff
-            tgt_mask = tgt_causal_mask & tgt_padding_mask
+            tgt_mask = tgt_causal_mask & tgt_padding_mask   # shape: (batch_size, 1, seq_len_q, seq_len_q)
 
             # Forward w/ Teacher Forcing
             self.optimizer.zero_grad()
-            output = self.model(src, tgt_input, src_mask, tgt_mask)
+            output = self.model(src, tgt_input, src_mask, tgt_mask) # shape: (batch_size, seq_len_q, z?) (8, 15, 22?)
 
             loss = self.criterion(output.reshape(-1, output.size(-1)), tgt_output.reshape(-1))
 

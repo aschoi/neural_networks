@@ -82,12 +82,12 @@ class Transformer(nn.Module):
         Forward Pass Through Complete Transformer
         
         Args:
-            src:        <tensor>
-            tgt:        <type>
-            src_mask:   <type>
-            tgt_mask:   <type>
+            src:        <tensor>    shape: (batch_size, seq_len_q)
+            tgt:        <tensor>    shape: (batch_size, seq_len_q)
+            src_mask:   <tensor>    shape: (batch_size, 1, 1, seq_len_q)
+            tgt_mask:   <tensor>    shape: (batch_size, 1, seq_len_q, seq_len_q)
         Return:
-            output      <type>
+            output      <tensor>    shape: (batch_size, seq_len_q, z?)
         """
         # Embed and encode source
         src_embedded = self.positional_encoding(self.src_embedding(src))  # returns tensor (smallish step)
