@@ -2,11 +2,12 @@ import torch
 from torch.utils.data import DataLoader
 import time
 
-from models.transformer_model import Transformer
-from data.utils import create_synthetic_data, Vocabulary, TranslationDataset
-from train import TransformerTrainer
-from inference import TransformerInference
+from model_reverseEnglish.transformer_model import Transformer
+from model_reverseEnglish.data_utils import create_synthetic_data, Vocabulary, TranslationDataset
+from model_reverseEnglish.train import TransformerTrainer
+from model_reverseEnglish.inference import TransformerInference
 
+# Reverse English Model
 def collate_fn(batch):
     """
     Custom collate function
@@ -29,9 +30,9 @@ def main():
     print("Testing Transformer Inference.")
 
     # Prepare Data
-    src_sentences, tgt_sentences = create_synthetic_data(num_samples=200)
-    src_vocab = Vocabulary()
-    tgt_vocab = Vocabulary()
+    src_sentences, tgt_sentences = create_synthetic_data(num_samples=200)  # list<string>
+    src_vocab = Vocabulary()        # dict{idx: token}, dict{token: idx}, size
+    tgt_vocab = Vocabulary()        # dict{idx: token}, dict{token: idx}, size
     src_vocab.build_vocab(src_sentences)
     tgt_vocab.build_vocab(tgt_sentences)
 

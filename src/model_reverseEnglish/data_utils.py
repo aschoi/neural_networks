@@ -125,10 +125,10 @@ def create_synthetic_data(num_samples=1000):
     Create synthetic translation data (English to reversed English)
     
     Args:
-        num_samples         <int>   
+        num_samples         <int>           number of synthetic (repeated versions) samples to be created
     Return:
-        src_sentences:      <type>
-        tgt_sentences:      <type>
+        src_sentences:      list<string>    a list containing the OG sentences. Each element is 1 sample sentence.         size: num_samples
+        tgt_sentences:      list<string>    a list containing the "Translated" sentences.  Each elm is 1 sample sentence.  size: num_samples
     """
     templates = [
         "hello world", "good morning", "how are you", "nice to meet you", 

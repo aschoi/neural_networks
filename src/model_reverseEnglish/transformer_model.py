@@ -55,10 +55,10 @@ class Transformer(nn.Module):
         Create padding mask
         
         Args:
-            seq:        <type>
+            seq:        <tensor>
             pad_token:  <int>
         Return:
-                        <type>
+                        <tensor>
         """
         return (seq != pad_token).unsqueeze(1).unsqueeze(2)
 
@@ -70,7 +70,7 @@ class Transformer(nn.Module):
         Args:
             size:       <int>
         Return:
-                        <type>
+                        <tensor>
         """
         mask = torch.tril(torch.ones(size, size))
 
@@ -82,7 +82,7 @@ class Transformer(nn.Module):
         Forward Pass Through Complete Transformer
         
         Args:
-            src:        <type>
+            src:        <tensor>
             tgt:        <type>
             src_mask:   <type>
             tgt_mask:   <type>
@@ -90,12 +90,12 @@ class Transformer(nn.Module):
             output      <type>
         """
         # Embed and encode source
-        src_embedded = self.positional_encoding(self.src_embedding(src))
-        encoder_output, _ = self.encoder(src_embedded, src_mask)
-
+        src_embedded = self.positional_encoding(self.src_embedding(src))  # returns tensor (smallish step)
+        encoder_output, _ = self.encoder(src_embedded, src_mask)  # returns tensor (Big Time Step)
+        # TransformerEncoder --> TransformerEncoderLayer --> MultiHeadAttention --> AddNorm 
         # Embed and decode target
-        tgt_embedded = self.positional_encoding(self.tgt_embedding(tgt))
-        decoder_output, _ = self.decoder(tgt_embedded, encoder_output, tgt_mask, src_mask)
+        tgt_embedded = self.positional_encoding(self.tgt_embedding(tgt)) # (smallish step)
+        decoder_output, _ = self.decoder(tgt_embedded, encoder_output, tgt_mask, src_mask)  # (Big time step)
 
         # Project to Vocabulary
         output = self.output_projection(decoder_output)

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import math
-from models.transformer_model import Transformer
+from model_reverseEnglish.transformer_model import Transformer
 
 
 class TransformerTrainer:
@@ -68,7 +68,7 @@ class TransformerTrainer:
             tgt_input = batch['tgt']
             tgt_output = batch['tgt_output']
 
-            # Create masks
+            # Create masks (part of training / data prep technique. basically a techinique that helps to optimize result from training)
             src_mask = self.model.create_padding_mask(src)
             tgt_causal_mask = self.model.create_causal_mask(tgt_input.size(1))
             tgt_padding_mask = self.model.create_padding_mask(tgt_input)

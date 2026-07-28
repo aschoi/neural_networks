@@ -77,8 +77,8 @@ class TokenEmbedding(nn.Module):
         """
         Convert token indices to embeddings scaled by sqrt(d_model)
         Args:
-            X:      <type>
+            X:      <tensor>
         Return:
-            output:     <type>
+            output:     <tensor>
         """
         return self.embedding(X) * math.sqrt(self.d_model)
