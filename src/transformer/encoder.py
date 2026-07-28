@@ -1,7 +1,7 @@
 import torch.nn as nn
-from transformer.attention import MultiHeadAttention
-from transformer.feed_forward import PositionwiseFeedForward
-from transformer.utils import AddNorm
+from .attention import MultiHeadAttention
+from .feed_forward import PositionwiseFeedForward
+from .utils import AddNorm
 
 
 class TransformerEncoderLayer(nn.Module):

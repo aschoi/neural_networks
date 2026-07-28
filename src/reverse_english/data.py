@@ -3,7 +3,7 @@ from torch.utils.data import Dataset, DataLoader
 from collections import Counter
 import random
 
-
+# Essentially a simple tokenizer. 
 class Vocabulary:
     def __init__(self):
         """
@@ -24,7 +24,7 @@ class Vocabulary:
             self.idx2Token[self.size] = token
             self.size += 1
 
-
+    # Basically the tokenizer
     def build_vocab(self, sentences, min_freq=1):
         """
         Build vocabulary from list of sentences

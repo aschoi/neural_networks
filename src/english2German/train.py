@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import math
-from model_reverseEnglish.transformer_model import Transformer
+from model_english2German.model import Transformer
 
 
 class TransformerTrainer:
@@ -11,8 +11,8 @@ class TransformerTrainer:
         Training Module for Transformer Constructor
 
         Args:
-            model:          <model>
-            train_loader:   <type>
+            model:          <model transformer>
+            train_loader:   <torch.utils.data.DataLoader>
             lr:             <float>
             warmup_steps:   <int>
         """
@@ -33,7 +33,6 @@ class TransformerTrainer:
         """
         d_model = self.model.d_model
         step_num = self.step_num + 1
-
 
         warmup_lr_increase = step_num * (self.warmup_steps**(-1.5))
         regular_lr_decay = step_num**(-0.5)

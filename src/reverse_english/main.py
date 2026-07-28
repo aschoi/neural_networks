@@ -2,10 +2,10 @@ import torch
 from torch.utils.data import DataLoader
 import time
 
-from model_reverseEnglish.transformer_model import Transformer
-from model_reverseEnglish.data_utils import create_synthetic_data, Vocabulary, TranslationDataset
-from model_reverseEnglish.train import TransformerTrainer
-from model_reverseEnglish.inference import TransformerInference
+from .model import Transformer
+from .data import create_synthetic_data, Vocabulary, TranslationDataset
+from .train import TransformerTrainer
+from .inference import TransformerInference
 
 # Reverse English Model
 def collate_fn(batch):
