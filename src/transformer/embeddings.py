@@ -60,7 +60,7 @@ class PositionalEncoding(nn.Module):
 
 
 class TokenEmbedding(nn.Module):
-    def __init__(self, vocab_size, d_model):
+    def __init__(self, vocab_size, d_model, padding_idx=0):
         """
         Token Embedding Layer
         Args:
@@ -68,7 +68,7 @@ class TokenEmbedding(nn.Module):
             d_model:        <int>   Model Dimensions
         """
         super(TokenEmbedding, self).__init__()
-        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.embedding = nn.Embedding(vocab_size, d_model, padding_idx)
         self.d_model = d_model
         nn.init.xavier_uniform_(self.embedding.weight)
 

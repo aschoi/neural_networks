@@ -1,24 +1,25 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
-import torch.nn.functional as F
-import time
 
-from .model import Transformer
-from .train import TransformerTrainer
-from datasets import load_dataset
-
-from itertools import chain
 from tokenizers import Tokenizer
 from tokenizers.models import BPE
 from tokenizers.pre_tokenizers import Whitespace
 from tokenizers.trainers import BpeTrainer
 
-from dataclasses import dataclass
+from datasets import load_dataset
 import sacrebleu
+from dataclasses import dataclass
+
+import time
+import re
 from pathlib import Path
+from collections.abc import Iterable
+from .model import Transformer
+
 
 @dataclass
 class TestResults:
@@ -34,194 +35,227 @@ class TestResults:
 def greedy_decode_batch(
     model: nn.Module,
     source: torch.Tensor,
-    sos_index: int,
-    eos_index: int,
-    max_output_length: int,
+    src_pad_id: int,
+    tgt_pad_id: int,
+    tgt_bos_id: int,
+    tgt_eos_id: int,
+    max_output_length: int = 100
 ) -> torch.Tensor:
     """
-    Generate target sequences autoregressively.
+    Translate a batch of source sequences using greedy decoding.
 
     Args:
-        source:
-            [batch_size, source_length]
+        model:      Encoder-decoder Transformer.
+        source:     Source token IDs shaped: [batch_size, source_length]
+        src_pad_id: Padding-token ID used by the source tokenizer
+        tgt_pad_id: Padding-token ID used by the target tokenizer.
+        tgt_bos_id: Beginning-of-sequence ID used by the target tokenizer.
+        tgt_eos_id: End-of-sequence ID used by the target tokenizer.
+        max_output_length:Maximum generated sequence length, including BOS.
 
     Returns:
-        generated:
-            [batch_size, generated_length]
+        Generated target IDs shaped: [batch_size, generated_length]
     """
+
+    if max_output_length < 2:
+        raise ValueError("max_output_length must be at least 2 to allow BOS and one generated token.")
+
+    model.eval()
 
     batch_size = source.size(0)
 
-    generated = torch.full(size=(batch_size, 1), fill_value=sos_index, dtype=torch.long)
+    # Every target sequence begins with the target-language BOS token.
+    generated = torch.full(size=(batch_size, 1), fill_value=tgt_bos_id, dtype=torch.long)
+
+    # Tracks which sequences have already generated EOS.
     finished = torch.zeros(batch_size, dtype=torch.bool)
 
-    for _ in range(max_output_length):
-        logits = model(source, generated)
+    # The source does not change during decoding, so create this once.
+    src_mask = model.create_padding_mask(source, pad_token=src_pad_id)
 
-        # Last output position:
-        # [batch_size, target_vocab_size]
-        next_token_logits = logits[:, -1, :]
+    with torch.inference_mode():
+        # BOS already occupies one position.
 
-        next_token = next_token_logits.argmax(dim=-1, keepdim=True)
+        # The REPETITIVE re-feeding of the sequential generation of the model's predictions
+        # The generative output gets built, one token at a time. 
+        for _ in range(max_output_length - 1):
+            target_length = generated.size(1)
+            tgt_causal_mask = model.create_causal_mask(target_length)
+            tgt_padding_mask = model.create_padding_mask(generated, pad_token=tgt_pad_id)
 
-        generated = torch.cat([generated, next_token], dim=1 )
+            # Both masks use:
+            # True  = attention allowed
+            # False = attention blocked
+            tgt_mask = tgt_causal_mask & tgt_padding_mask
+            logits = model(source, generated, src_mask, tgt_mask)
 
-        finished |= next_token.squeeze(1).eq(eos_index)
+            # Expected logits shape:
+            # [batch_size, target_length, target_vocab_size]
+            if logits.ndim != 3:
+                raise RuntimeError(f"Expected model output with 3 dimensions [batch, target_length, vocabulary_size], but received shape {tuple(logits.shape)}.")
 
-        if finished.all():
-            break
+            # Only use the prediction at the newest target position.
+            next_token_logits = logits[:, -1, :]
+
+            # Greedy decoding chooses the highest-logit token.
+            next_token = next_token_logits.argmax(dim=-1, keepdim=True)
+
+            # Sequences that previously produced EOS receive PAD from
+            # this point onward while the other sequences continue.
+            next_token = torch.where(finished.unsqueeze(1), torch.full_like(next_token, tgt_pad_id), next_token)
+
+            generated = torch.cat([generated, next_token], dim=1)
+
+            # Mark newly completed sequences.
+            finished |= next_token.squeeze(1).eq(tgt_eos_id)
+
+            if finished.all():
+                break
 
     return generated
 
 
+def clean_decoded_text(text: str) -> str:
+    # Remove spaces before common punctuation.
+    text = re.sub(r"\s+([.,!?;:])", r"\1", text)
 
-# tokenizer
-def tokenize(dataset):
-    tokenizer = Tokenizer(
-        BPE(unk_token="[UNK]")
-    )
+    # Normalize repeated whitespace.
+    text = re.sub(r"\s+", " ", text)
 
-    tokenizer.pre_tokenizer = Whitespace()
-
-    trainer = BpeTrainer(
-        vocab_size=8000,
-        min_frequency=2,
-        special_tokens=[
-            '[PAD]', '[UNK]', '[BOS]', '[EOS]', 
-        ], 
-    )
-
-    training_texts = chain(dataset['en'], dataset['de'])
-    tokenizer.train_from_iterator(
-        training_texts, trainer=trainer,
-    )
-
-    return tokenizer
-
+    return text.strip()
 
 
 def main():
 
-    # def collate_fn(batch):
-    #     """
-    #     Custom collate function
-    #     Args:
-
-    #     Return:
-    #     """
-    #     src_seqs = []
-    #     tgt_seqs = []
-
-    #     for sample in batch:
-    #         src_ids = tokenizer.encode(sample['en']).ids
-    #         tgt_ids = tokenizer.encode(sample['de']).ids
-    #         src = torch.tensor([BOS_ID, *src_ids, EOS_ID], dtype=torch.int64)
-    #         tgt = torch.tensor([BOS_ID, *tgt_ids, EOS_ID], dtype=torch.int64)
-
-    #         src_seqs.append(src)
-    #         tgt_seqs.append(tgt)
-
-    #     src_batch = pad_sequence(src_seqs, batch_first=True, padding_value=PAD_ID)
-    #     tgt_batch = pad_sequence(tgt_seqs, batch_first=True, padding_value=PAD_ID)
-
-    #     return {
-    #         "src": src_batch,
-    #         "tgt": tgt_batch[:, :-1],
-    #         "tgt_output": tgt_batch[:, 1:],
-    #         "src_padding_mask": src_batch.eq(PAD_ID),
-    #         "tgt_padding_mask": tgt_batch[:, :-1].eq(PAD_ID),
-    #     }
+    # ------ functions --------
     def collate_fn(batch):
-        src_sequences = []
-        full_tgt_sequences = []
+        """
+        Custom collate function
+        Args:
 
-        for example in batch:
-            src_ids = tokenizer.encode(example["en"]).ids
-            tgt_ids = tokenizer.encode(example["de"]).ids
-            src = torch.tensor([BOS_ID, *src_ids, EOS_ID], dtype=torch.int64)
-            tgt = torch.tensor([BOS_ID, *tgt_ids, EOS_ID], dtype=torch.int64)
+        Return:
+        """
+        src_seqs = []
+        tgt_seqs = []
 
-            src_sequences.append(src)
-            full_tgt_sequences.append(tgt)
+        englishTexts = []
+        germanTexts = []
 
-        src = pad_sequence(src_sequences, batch_first=True, padding_value=PAD_ID)
+        for sample in batch:
 
-        full_tgt = pad_sequence(full_tgt_sequences, batch_first=True, padding_value=PAD_ID)
+            engSample = sample["en"]
+            englishTexts.append(engSample)
+            bos_engEncodings_eos = encode_source(engSample)
+            bos_engEncodings_eos_tensor = torch.tensor(bos_engEncodings_eos, dtype=torch.long)
+            src_seqs.append(bos_engEncodings_eos_tensor)
 
-        # Example full target:
-        # [BOS, ein, mann, läuft, EOS]
-        #
-        # Decoder input:
-        # [BOS, ein, mann, läuft]
-        tgt_input = full_tgt[:, :-1]
+            germSample = sample["de"]
+            germanTexts.append(germSample)
+            bos_deEncodings_eos = encode_target(germSample)
+            bos_deEncodings_eos_tensor = torch.tensor(bos_deEncodings_eos, dtype=torch.long)
+            tgt_seqs.append(bos_deEncodings_eos_tensor)
 
-        # Expected model output:
-        # [ein, mann, läuft, EOS]
-        tgt_output = full_tgt[:, 1:]
+        # takes the list of seqs (diff lengths) and pads the shorter ones to match the longest sequence. Returns one tensor
+        t_bos_srcEncodings_eos_pads_asIds = pad_sequence(src_seqs, batch_first=True, padding_value=SRC_PAD_ID)
+        t_bos_tgtEncodings_eos_pads_asIds = pad_sequence(tgt_seqs, batch_first=True, padding_value=TGT_PAD_ID)
+
+        # [BOS, token1, token2, ..., tokenN]
+        t_bos_tgtEncodings_pads_asIds = t_bos_tgtEncodings_eos_pads_asIds[:, :-1]
+
+        # [token1, token2, ..., tokenN, EOS]
+        t_tgtEncodings_eos_pads_asIds = t_bos_tgtEncodings_eos_pads_asIds[:, 1:]
 
         return {
-            "src": src,
-            "tgt": tgt_input,
-            "tgt_output": tgt_output,
-            "target_full": full_tgt,
+            "bos_src_eos": t_bos_srcEncodings_eos_pads_asIds,
+            "bos_tgt": t_bos_tgtEncodings_pads_asIds,
+            "tgt_eos": t_tgtEncodings_eos_pads_asIds,
+            "bos_tgt_eos": t_bos_tgtEncodings_eos_pads_asIds,
+            "en": englishTexts,
+            "de": germanTexts
         }
 
+
+    
+    def encode_source(text: str) -> list[int]:
+        encoding = source_tokenizer.encode(text)
+
+        return [SRC_BOS_ID, *encoding.ids, SRC_EOS_ID]
+
+
+    def encode_target(text: str) -> list[int]:
+        encoding = target_tokenizer.encode(text)
+
+        return [TGT_BOS_ID, *encoding.ids, TGT_EOS_ID]
+
+
+    SPECIAL_TOKENS = ['[PAD]', '[UNK]', '[BOS]', '[EOS]']
+    unk_token = '[UNK]'
+
+    # -------- main --------
     print("Testing Model against BLEU.")
 
     dataset = load_dataset("bentrevett/multi30k")
 
-    training_dataset = dataset['train']
-    validation_dataset = dataset['validation']
+    # training_dataset = dataset['train']
+    # validation_dataset = dataset['validation']
     test_dataset = dataset['test']
 
-    tokenizer = tokenize(training_dataset)
+    source_tokenizer = Tokenizer.from_file("tokenizers/english_bpe.json")
+    target_tokenizer = Tokenizer.from_file("tokenizers/german_bpe.json")
 
-    PAD_ID = tokenizer.token_to_id("[PAD]")
-    UNK_ID = tokenizer.token_to_id("[UNK]")
-    BOS_ID = tokenizer.token_to_id("[BOS]")
-    EOS_ID = tokenizer.token_to_id("[EOS]")
+    SRC_PAD_ID = source_tokenizer.token_to_id("[PAD]")
+    SRC_BOS_ID = source_tokenizer.token_to_id("[BOS]")
+    SRC_EOS_ID = source_tokenizer.token_to_id("[EOS]")
 
-    VOCAB_SIZE = tokenizer.get_vocab_size()  
+    TGT_PAD_ID = target_tokenizer.token_to_id("[PAD]")
+    TGT_BOS_ID = target_tokenizer.token_to_id("[BOS]")
+    TGT_EOS_ID = target_tokenizer.token_to_id("[EOS]")
 
-    test_loader = DataLoader(
-        test_dataset, 
-        batch_size=16, 
-        shuffle=False, 
-        collate_fn=collate_fn
-    )
+    source_vocab_size = source_tokenizer.get_vocab_size()
+    target_vocab_size = target_tokenizer.get_vocab_size()
 
-    
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, collate_fn=collate_fn)
+
     # Create Model
     model = Transformer(
-        src_vocab_size=VOCAB_SIZE,
-        tgt_vocab_size=VOCAB_SIZE,
+        src_vocab_size=source_vocab_size,
+        tgt_vocab_size=target_vocab_size,
+        src_pad_id=SRC_PAD_ID,
+        tgt_pad_id=TGT_PAD_ID,
         d_model=256,
-        num_heads=8,
+        num_heads=4,
         num_encoder_layers=3,
         num_decoder_layers=3,
-        d_ff=512,
-        dropout=0.1
+        d_ff=1024,
+        dropout=0.2,
+        activation='gelu'
     )
 
-    # optimizer = optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.98), eps=1e-9)
-
+    parameter_name = next(iter(model.state_dict()))
+    before = model.state_dict()[parameter_name].clone()
 
     checkpoint_path = Path("checkpoints/english2German_latest.pt")
-    checkpoint = torch.load(
-        checkpoint_path,
-        map_location="cpu",
-        weights_only=True,
-    )
-    model.load_state_dict(
-        checkpoint["model_state_dict"]
-    )
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
 
+    model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 
-    criterion = nn.CrossEntropyLoss(ignore_index=PAD_ID)
+    # print(f'Loaded Model detals: {model}')
+    print("Loaded checkpoint successfully")
+    print("Saved epoch:", checkpoint.get("epoch"))
+    print("Validation loss:", checkpoint.get("validation_loss"))
 
-    predictions: list[str] = []
-    references: list[str] = []
+    after = model.state_dict()[parameter_name]
+
+    print("Parameter:", parameter_name)
+    print("Weights changed:", not torch.equal(before, after))
+    print()
+
+    criterion = nn.CrossEntropyLoss(ignore_index=TGT_PAD_ID)
+
+    predictions = []
+    references = []
+    gref = []
 
     total_loss = 0.0
     total_loss_tokens = 0
@@ -229,155 +263,105 @@ def main():
     total_correct_tokens = 0
     total_compared_tokens = 0
 
-    with torch.inference_mode():
 
+    model.eval()
+    with torch.inference_mode():
 
         for batch in test_loader:
             # Parse Batch Data
-            source = batch['src']
-            target = batch['target_full']
+            bos_src_eos_batch = batch['bos_src_eos']
+            bos_tgt_batch = batch['bos_tgt']
+            tgt_eos_batch = batch['tgt_eos']
+            bos_tgt_eos_batch = batch['bos_tgt_eos']
+            english_text_batch = batch['en']
+            german_text_batch = batch['de']
 
-            # --------------------------------------------
-            # 1. Teacher-forced test loss
-            # --------------------------------------------
+            src_padding_mask = model.create_padding_mask(bos_src_eos_batch)
+            tgt_padding_mask = model.create_padding_mask(bos_tgt_batch)
+            tgt_causal_mask = model.create_causal_mask(bos_tgt_batch.size(1))
 
-            decoder_input = target[:, :-1]
-            expected_output = target[:, 1:]
+            tgt_mask = tgt_causal_mask & tgt_padding_mask
 
-            logits = model(
-                source,
-                decoder_input,
-            )
-
-            vocabulary_size = logits.size(-1)
-
-            loss = criterion(
-                logits.reshape(-1, vocabulary_size),
-                expected_output.reshape(-1),
-            )
-
-            non_pad_count = (
-                expected_output != PAD_ID
-            ).sum().item()
-
-            total_loss += loss.item() * non_pad_count
-            total_loss_tokens += non_pad_count
-
-            # --------------------------------------------
-            # 2. Autoregressive generation
-            # --------------------------------------------
+            # output = model(bos_src_eos_batch, bos_tgt_batch, src_padding_mask, tgt_mask)
+            # loss = criterion(output.reshape(-1, output.size(-1)), tgt_eos_batch.reshape(-1))
+            # total_loss += loss.item()
+            # num_batches += 1
 
             generated = greedy_decode_batch(
                 model=model,
-                source=source,
-                sos_index=BOS_ID,
-                eos_index=EOS_ID,
+                source=bos_src_eos_batch,
+                src_pad_id=SRC_PAD_ID,
+                tgt_pad_id=TGT_PAD_ID,
+                tgt_bos_id=TGT_BOS_ID,
+                tgt_eos_id=TGT_EOS_ID,
                 max_output_length=100,
             )
 
-            # --------------------------------------------
-            # 3. Convert generated/reference IDs to text
-            # --------------------------------------------
+            i = 0
+            for predicted_ids, reference_ids in zip(generated.tolist(), bos_tgt_eos_batch.tolist()):
 
-            for predicted_ids, reference_ids in zip(
-                generated.tolist(),
-                target.tolist(),
-            ):
+                predicted_text = target_tokenizer.decode(predicted_ids, skip_special_tokens=True)
+                predicted_text = clean_decoded_text(predicted_text)
 
-
-                predicted_text = tokenizer.decode(
-                    predicted_ids,
-                    skip_special_tokens=True,
-                )
-
-                reference_text = tokenizer.decode(
-                    reference_ids,
-                    skip_special_tokens=True,
-                )
+                reference_text = target_tokenizer.decode(reference_ids, skip_special_tokens=True)
+                reference_text = clean_decoded_text(reference_text)
 
                 predictions.append(predicted_text)
                 references.append(reference_text)
+                gref.append(german_text_batch[i])
+                i += 1
 
 
-                # Token accuracy compares positions up to the
-                # longer of the two sequences.
-                comparison_length = max(
-                    len(predicted_text),
-                    len(reference_text),
-                )
-
-                total_compared_tokens += comparison_length
-
-                for index in range(comparison_length):
-                    predicted_token = (
-                        predicted_text[index]
-                        if index < len(predicted_text)
-                        else None
-                    )
-
-                    reference_token = (
-                        reference_text[index]
-                        if index < len(reference_text)
-                        else None
-                    )
-
-                    if predicted_token == reference_token:
-                        total_correct_tokens += 1
+            print("Generated IDs:", generated[-1].tolist())
+            print("Translation:", predictions[-1])
+            print(f"German Text: {gref[-1]}")
+            print()
 
     if not references:
         raise ValueError("The test loader produced no examples.")
 
-    if total_loss_tokens == 0:
-        raise ValueError(
-            "The test set contained no non-padding target tokens."
-        )
+    # if total_loss_tokens == 0:
+    #     raise ValueError("The test set contained no non-padding target tokens.")
 
     # SacreBLEU expects:
     # predictions: list[str]
     # references:  list[list[str]]
     #
     # Each inner list is one complete reference corpus.
-    bleu_result = sacrebleu.corpus_bleu(
-        predictions,
-        [references],
-    )
+    bleu_result = sacrebleu.corpus_bleu(predictions, [references])
 
     exact_matches = sum(
         prediction.strip() == reference.strip()
-        for prediction, reference in zip(
-            predictions,
-            references,
-        )
+        for prediction, reference in zip(predictions, references)
     )
 
-    exact_match_percent = (
-        100.0 * exact_matches / len(references)
-    )
+    exact_match_percent = (100.0 * exact_matches / len(references))
 
-    token_accuracy_percent = (
-        100.0 * total_correct_tokens / total_compared_tokens
-        if total_compared_tokens > 0
-        else 0.0
-    )
+    # token_accuracy_percent = (
+    #     100.0 * total_correct_tokens / total_compared_tokens
+    #     if total_compared_tokens > 0 
+    #     else 0.0
+    # )
 
-    average_test_loss = total_loss / total_loss_tokens
+    # average_test_loss = total_loss / total_loss_tokens
 
-    # Prevent overflow for a severely undertrained model.
-    perplexity = (
-        torch.exp(
-            torch.tensor(
-                min(average_test_loss, 100.0)
-            )
-        ).item()
-    )
+    # # Prevent overflow for a severely undertrained model.
+    # perplexity = (
+    #     torch.exp(
+    #         torch.tensor(min(average_test_loss, 100.0))
+    #     ).item()
+    # )
 
-    print(f'bleu:  {bleu_result.score}')
-    print(f'exact_match_percent:  {exact_match_percent}')
-    print(f'token_accuracy_percent:  {token_accuracy_percent}')
-    print(f'average_test_loss:  {average_test_loss}')
-    print(f'perplexity:  {perplexity}')
-    print(f'predictions:  {predictions}')
-    print(f'references:  {references}')
+    print(f'\nbleu:  {bleu_result.score}')
+    # print(f'exact_match_percent:  {exact_match_percent}')
+    # print(f'token_accuracy_percent:  {token_accuracy_percent}')
+    # print(f'average_test_loss:  {average_test_loss}')
+    # print(f'perplexity:  {perplexity}')
+    # print(f'predictions:  {predictions}')
+    # print(f'references:  {references}')
+
+    bleu_result2 = sacrebleu.corpus_bleu(predictions, [gref])
+    print(f'\nbleu2:  {bleu_result2.score}')
 
 
     for index in range(min(10, len(predictions))):

@@ -17,23 +17,6 @@ from pathlib import Path
 
 
 
-def train_bpe_hf_tokenizer(
-    texts: Iterable[str], 
-    vocab_size: int,
-    unk_token: str,
-    special_tokens: list[str]
-) -> Tokenizer:
-    """
-    Hugging Face Byte Pair Encoding Tokenizer
-    """
-    tokenizer = Tokenizer(BPE(unk_token=unk_token))
-    tokenizer.pre_tokenizer = Whitespace()
-    trainer = BpeTrainer(vocab_size=vocab_size, min_frequency=2, special_tokens=special_tokens)
-    tokenizer.train_from_iterator(texts, trainer=trainer)
-
-    return tokenizer
-
-
 def main():
 
     def collate_fn(batch):
@@ -95,9 +78,8 @@ def main():
     SPECIAL_TOKENS = ['[PAD]', '[UNK]', '[BOS]', '[EOS]']
     unk_token = '[UNK]'
 
-
-    # -------- main -------
-    print("Testing Transformer Inference.")
+    # ----- Main -------
+    print("Continue Training From Saved Model.")
 
     dataset = load_dataset("bentrevett/multi30k")
 
@@ -105,26 +87,8 @@ def main():
     validation_dataset = dataset['validation']
     #  test_dataset = dataset['test']
 
-    source_tokenizer = train_bpe_hf_tokenizer(
-        texts=training_dataset["en"], 
-        vocab_size=4000,
-        unk_token=unk_token,
-        special_tokens=SPECIAL_TOKENS
-    )
-
-    target_tokenizer = train_bpe_hf_tokenizer(
-        texts=training_dataset["de"], 
-        vocab_size=5000,
-        unk_token=unk_token,
-        special_tokens=SPECIAL_TOKENS
-    )
-
-
-    tokenizer_directory = Path("tokenizers")
-    tokenizer_directory.mkdir(parents=True, exist_ok=True)
-    source_tokenizer.save(str(tokenizer_directory / "english_bpe.json"))
-    target_tokenizer.save(str(tokenizer_directory / "german_bpe.json"))
-    
+    source_tokenizer = Tokenizer.from_file("tokenizers/english_bpe.json")
+    target_tokenizer = Tokenizer.from_file("tokenizers/german_bpe.json")
 
     SRC_PAD_ID = source_tokenizer.token_to_id("[PAD]")
     SRC_UNK_ID = source_tokenizer.token_to_id("[UNK]")
@@ -140,7 +104,7 @@ def main():
     target_vocab_size = target_tokenizer.get_vocab_size()
 
     train_loader = DataLoader(training_dataset, batch_size=64, shuffle=True, collate_fn=collate_fn)
-    validation_loader = DataLoader(validation_dataset, batch_size=64, shuffle=True, collate_fn=collate_fn)
+    validation_loader = DataLoader(validation_dataset,batch_size=64, shuffle=True,collate_fn=collate_fn)
     
     # Create Model
     model = Transformer(
@@ -157,16 +121,25 @@ def main():
         activation='gelu'
     )
 
+    parameter_name = next(iter(model.state_dict()))
+    before = model.state_dict()[parameter_name].clone()
+    
+    checkpoint_path = Path("checkpoints/english2German_latest.pt")
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    startEpoch = checkpoint['epoch']
+    
     # Train Model
     trainer = TransformerTrainer(model, train_loader, validation_loader, TGT_PAD_ID, lr=3e-4, warmup_steps=800)
 
     start = time.perf_counter()
 
-    epochs = 10
-    print(f"\n-----Training for {epochs} epochs-----")
-    for epoch in range(1, epochs+1):
-        training_loss, validation_loss = trainer.train_epoch(epoch)
-        print(f"Epoch {epoch}, Training Loss: {training_loss:.4f}, Validation Loss: {validation_loss}\n")
+    epochs = 30
+    print(f"\n-----Training-----")
+    print(f'saved state epoch count: {startEpoch}, training for {epochs} epochs')
+    for curEpoch in range(startEpoch, epochs+1):
+        training_loss, validation_loss = trainer.train_epoch(curEpoch)
+        print(f"Epoch {curEpoch}, Training Loss: {training_loss:.4f}, Validation Loss: {validation_loss}\n")
 
 
 if __name__ == "__main__":

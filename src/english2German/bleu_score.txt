@@ -1,0 +1,4 @@
+epochs: 29
+bleu score: 27.95
+
+To Do: Will upload model to AWS
